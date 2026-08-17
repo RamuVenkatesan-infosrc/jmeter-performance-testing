@@ -23,8 +23,8 @@ on:
         description: 'Ramp-up period in seconds'
         required: false
         default: '30'
-      duration:
-        description: 'Test duration in seconds (leave empty to use user.properties default: 30s)'
+      loops:
+        description: 'Loops per thread (threads x loops = total requests, default: 10)'
         required: false
         default: ''
 
@@ -113,14 +113,14 @@ jobs:
           RESULTS_FILE="${{ env.RESULTS_DIR }}/results.jtl"
 
           EXTRA_ARGS=""
-          if [ "${{ github.event.inputs.threads }}" != "" ] && [ "${{ github.event.inputs.threads }}" != "10" ]; then
+          if [ "${{ github.event.inputs.threads }}" != "" ]; then
             EXTRA_ARGS="$EXTRA_ARGS -Jthreads=${{ github.event.inputs.threads }}"
           fi
-          if [ "${{ github.event.inputs.ramp_up }}" != "" ] && [ "${{ github.event.inputs.ramp_up }}" != "30" ]; then
+          if [ "${{ github.event.inputs.ramp_up }}" != "" ]; then
             EXTRA_ARGS="$EXTRA_ARGS -Jramp_up=${{ github.event.inputs.ramp_up }}"
           fi
-          if [ "${{ github.event.inputs.duration }}" != "0" ] && [ "${{ github.event.inputs.duration }}" != "" ]; then
-            EXTRA_ARGS="$EXTRA_ARGS -Jduration=${{ github.event.inputs.duration }}"
+          if [ "${{ github.event.inputs.loops }}" != "" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS -Jloops=${{ github.event.inputs.loops }}"
           fi
 
           echo "Starting JMeter test..."
