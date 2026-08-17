@@ -1,4 +1,4 @@
-﻿name: JMeter Performance Tests
+name: JMeter Performance Tests
 
 on:
   push:
@@ -130,12 +130,7 @@ jobs:
             -t "${{ env.JMX_FILE }}" \
             -l "$RESULTS_FILE" \
             -p "jmeter/user.properties" \
-            $EXTRA_ARGS \
-            -Jjmeter.save.saveservice.output_format=xml \
-            -Jjmeter.save.saveservice.response_data.on_error=true \
-            -Jjmeter.save.saveservice.samplerData=true \
-            -Jjmeter.save.saveservice.requestHeaders=true \
-            -Jjmeter.save.saveservice.responseHeaders=true
+            $EXTRA_ARGS
 
           echo "JMeter test completed. Results saved to: $RESULTS_FILE"
 
