@@ -173,9 +173,7 @@ jobs:
 
           ${{ env.JMETER_HOME }}/bin/jmeter \
             -g "$RESULTS_FILE" \
-            -o "$REPORT_DIR" \
-            -p "jmeter/user.properties" \
-            -Jjmeter.reportgenerator.overall_granularity=60000
+            -o "$REPORT_DIR"
 
           echo "HTML report generated at: $REPORT_DIR"
           ls -la "$REPORT_DIR"
