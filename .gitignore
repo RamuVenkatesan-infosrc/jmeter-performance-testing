@@ -1,0 +1,8 @@
+﻿# Directories created at runtime by GitHub Actions — do not commit these
+results/
+report/
+*.jtl
+*.log
+
+# JMeter local run artifacts
+jmeter.log

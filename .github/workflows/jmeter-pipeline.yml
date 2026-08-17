@@ -1,0 +1,221 @@
+﻿name: JMeter Performance Tests
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      jmeter_version:
+        description: 'Apache JMeter version to use'
+        required: false
+        default: '5.6.3'
+      threads:
+        description: 'Number of concurrent threads (users)'
+        required: false
+        default: '10'
+      ramp_up:
+        description: 'Ramp-up period in seconds'
+        required: false
+        default: '30'
+      duration:
+        description: 'Test duration in seconds (0 = use JMX default)'
+        required: false
+        default: '0'
+
+# Required for GitHub Pages deployment
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment to Pages
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+env:
+  JMETER_VERSION: ${{ github.event.inputs.jmeter_version || '5.6.3' }}
+  JMETER_HOME: ${{ github.workspace }}/apache-jmeter
+  JMX_FILE: jmeter/test-plan.jmx
+  RESULTS_DIR: results
+  REPORT_DIR: report
+
+jobs:
+  # ─────────────────────────────────────────────
+  # JOB 1: Run JMeter Tests & Generate HTML Report
+  # ─────────────────────────────────────────────
+  jmeter-test:
+    name: Run JMeter Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Checkout repo ──────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Set up Java (JMeter requires Java 8+) ─────────────────────────────
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # ── Cache JMeter installation ──────────────────────────────────────────
+      - name: Cache Apache JMeter
+        id: cache-jmeter
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.JMETER_HOME }}
+          key: jmeter-${{ env.JMETER_VERSION }}
+
+      # ── Download & install JMeter (only if not cached) ────────────────────
+      - name: Download & Install Apache JMeter
+        if: steps.cache-jmeter.outputs.cache-hit != 'true'
+        run: |
+          echo "Downloading Apache JMeter ${{ env.JMETER_VERSION }}..."
+          wget -q "https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-${{ env.JMETER_VERSION }}.tgz" \
+            -O jmeter.tgz
+          tar -xzf jmeter.tgz
+          mv "apache-jmeter-${{ env.JMETER_VERSION }}" "${{ env.JMETER_HOME }}"
+          echo "JMeter installed at: ${{ env.JMETER_HOME }}"
+
+      # ── Verify JMeter installation ─────────────────────────────────────────
+      - name: Verify JMeter
+        run: |
+          ${{ env.JMETER_HOME }}/bin/jmeter --version
+
+      # ── Validate JMX file exists ───────────────────────────────────────────
+      - name: Validate JMX file
+        run: |
+          if [ ! -f "${{ env.JMX_FILE }}" ]; then
+            echo "ERROR: JMX file not found at ${{ env.JMX_FILE }}"
+            echo "Please ensure your JMX file is placed at: jmeter/test-plan.jmx"
+            exit 1
+          fi
+          echo "JMX file found: ${{ env.JMX_FILE }}"
+
+      # ── Create output directories ──────────────────────────────────────────
+      - name: Create output directories
+        run: |
+          mkdir -p "${{ env.RESULTS_DIR }}"
+          mkdir -p "${{ env.REPORT_DIR }}"
+
+      # ── Run JMeter test (non-GUI mode) ─────────────────────────────────────
+      - name: Run JMeter Test Plan
+        run: |
+          JMETER_CMD="${{ env.JMETER_HOME }}/bin/jmeter"
+          RESULTS_FILE="${{ env.RESULTS_DIR }}/results.jtl"
+
+          EXTRA_ARGS=""
+          if [ "${{ github.event.inputs.threads }}" != "" ] && [ "${{ github.event.inputs.threads }}" != "10" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS -Jthreads=${{ github.event.inputs.threads }}"
+          fi
+          if [ "${{ github.event.inputs.ramp_up }}" != "" ] && [ "${{ github.event.inputs.ramp_up }}" != "30" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS -Jramp_up=${{ github.event.inputs.ramp_up }}"
+          fi
+          if [ "${{ github.event.inputs.duration }}" != "0" ] && [ "${{ github.event.inputs.duration }}" != "" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS -Jduration=${{ github.event.inputs.duration }}"
+          fi
+
+          echo "Starting JMeter test..."
+
+          $JMETER_CMD \
+            -n \
+            -t "${{ env.JMX_FILE }}" \
+            -l "$RESULTS_FILE" \
+            -p "jmeter/user.properties" \
+            $EXTRA_ARGS \
+            -Jjmeter.save.saveservice.output_format=xml \
+            -Jjmeter.save.saveservice.response_data.on_error=true \
+            -Jjmeter.save.saveservice.samplerData=true \
+            -Jjmeter.save.saveservice.requestHeaders=true \
+            -Jjmeter.save.saveservice.responseHeaders=true
+
+          echo "JMeter test completed. Results saved to: $RESULTS_FILE"
+
+      # ── Check JTL results file ─────────────────────────────────────────────
+      - name: Validate results file
+        run: |
+          RESULTS_FILE="${{ env.RESULTS_DIR }}/results.jtl"
+          if [ ! -f "$RESULTS_FILE" ]; then
+            echo "ERROR: Results file not found at $RESULTS_FILE"
+            exit 1
+          fi
+          LINE_COUNT=$(wc -l < "$RESULTS_FILE")
+          echo "Results file found with $LINE_COUNT lines"
+
+      # ── Generate HTML Report ───────────────────────────────────────────────
+      - name: Generate HTML Report
+        run: |
+          RESULTS_FILE="${{ env.RESULTS_DIR }}/results.jtl"
+          REPORT_DIR="${{ env.REPORT_DIR }}"
+
+          echo "Generating HTML report from: $RESULTS_FILE"
+
+          ${{ env.JMETER_HOME }}/bin/jmeter \
+            -g "$RESULTS_FILE" \
+            -o "$REPORT_DIR"
+
+          echo "HTML report generated at: $REPORT_DIR"
+          ls -la "$REPORT_DIR"
+
+      # ── Show test summary in logs ──────────────────────────────────────────
+      - name: Print test summary
+        run: |
+          RESULTS_FILE="${{ env.RESULTS_DIR }}/results.jtl"
+          echo "=== JMeter Test Summary ==="
+          echo "Report directory size: $(du -sh ${{ env.REPORT_DIR }} | cut -f1)"
+
+      # ── Upload HTML report as GitHub Actions artifact ─────────────────────
+      - name: Upload HTML Report as Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jmeter-html-report-${{ github.run_number }}
+          path: ${{ env.REPORT_DIR }}/
+          retention-days: 30
+
+      # ── Upload raw JTL results as artifact ────────────────────────────────
+      - name: Upload Raw JTL Results as Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jmeter-jtl-results-${{ github.run_number }}
+          path: ${{ env.RESULTS_DIR }}/
+          retention-days: 30
+
+      # ── Upload report for GitHub Pages deployment ──────────────────────────
+      - name: Upload report for GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: ${{ env.REPORT_DIR }}/
+
+  # ─────────────────────────────────────────────
+  # JOB 2: Deploy to GitHub Pages
+  # ─────────────────────────────────────────────
+  deploy-pages:
+    name: Deploy Report to GitHub Pages
+    needs: jmeter-test
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Print report URL
+        run: |
+          echo "JMeter HTML Report deployed to GitHub Pages:"
+          echo "${{ steps.deployment.outputs.page_url }}"
