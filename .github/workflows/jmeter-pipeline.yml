@@ -27,6 +27,10 @@ on:
         description: 'Loops per thread (threads x loops = total requests, default: 10)'
         required: false
         default: ''
+      jmx_path:
+        description: 'Optional: path to JMX file (e.g. tests/myplan.jmx). Leave empty to auto-discover all .jmx files in the repo.'
+        required: false
+        default: ''
 
 # Required for GitHub Pages deployment
 permissions:
@@ -42,7 +46,6 @@ concurrency:
 env:
   JMETER_VERSION: ${{ github.event.inputs.jmeter_version || '5.6.3' }}
   JMETER_HOME: ${{ github.workspace }}/apache-jmeter
-  JMX_FILE: jmeter/test-plan.jmx
   RESULTS_DIR: results
   REPORT_DIR: report
 
@@ -90,15 +93,49 @@ jobs:
         run: |
           ${{ env.JMETER_HOME }}/bin/jmeter --version
 
-      # ── Validate JMX file exists ───────────────────────────────────────────
-      - name: Validate JMX file
+      # ── Auto-discover JMX file ─────────────────────────────────────────────
+      # Priority: 1) jmx_path input (manual override)  2) auto-find any *.jmx
+      - name: Discover JMX file
+        id: discover_jmx
         run: |
-          if [ ! -f "${{ env.JMX_FILE }}" ]; then
-            echo "ERROR: JMX file not found at ${{ env.JMX_FILE }}"
-            echo "Please ensure your JMX file is placed at: jmeter/test-plan.jmx"
-            exit 1
+          MANUAL_PATH="${{ github.event.inputs.jmx_path }}"
+
+          if [ -n "$MANUAL_PATH" ]; then
+            # ── Manual override provided ────────────────────────────────────
+            if [ ! -f "$MANUAL_PATH" ]; then
+              echo "ERROR: Manually specified JMX not found: $MANUAL_PATH"
+              exit 1
+            fi
+            JMX_FILE="$MANUAL_PATH"
+            echo "Using manually specified JMX: $JMX_FILE"
+          else
+            # ── Auto-discovery: find all .jmx files in the repo ────────────
+            echo "No jmx_path provided — scanning repo for .jmx files..."
+            mapfile -t JMX_FILES < <(find . -name '*.jmx' -not -path './.git/*' | sort)
+
+            if [ ${#JMX_FILES[@]} -eq 0 ]; then
+              echo "ERROR: No .jmx files found in the repository."
+              echo "Please add your JMeter test plan (.jmx) anywhere in the repo."
+              exit 1
+            fi
+
+            echo "Found ${#JMX_FILES[@]} JMX file(s):"
+            for f in "${JMX_FILES[@]}"; do
+              echo "  - $f"
+            done
+
+            if [ ${#JMX_FILES[@]} -gt 1 ]; then
+              echo "Multiple JMX files found — using the first one."
+              echo "To run a specific file, use the 'jmx_path' input in workflow_dispatch."
+            fi
+
+            # Strip leading ./ from the path
+            JMX_FILE="${JMX_FILES[0]#./}"
           fi
-          echo "JMX file found: ${{ env.JMX_FILE }}"
+
+          echo "Selected JMX: $JMX_FILE"
+          # Export as step output so subsequent steps can read it
+          echo "jmx_file=$JMX_FILE" >> $GITHUB_OUTPUT
 
       # ── Create results directory only (report dir must be created by jmeter -g, not pre-created) ──────────
       - name: Create results directory
@@ -123,13 +160,29 @@ jobs:
             EXTRA_ARGS="$EXTRA_ARGS -Jloops=${{ github.event.inputs.loops }}"
           fi
 
-          echo "Starting JMeter test..."
+          JMX_FILE="${{ steps.discover_jmx.outputs.jmx_file }}"
+          JMX_DIR="$(dirname "$JMX_FILE")"
+
+          # Auto-detect user.properties: check same dir as JMX first, then repo-wide
+          USER_PROPS_ARG=""
+          if [ -f "$JMX_DIR/user.properties" ]; then
+            USER_PROPS_ARG="-p $JMX_DIR/user.properties"
+            echo "Using user.properties: $JMX_DIR/user.properties"
+          else
+            FOUND_PROPS=$(find . -name 'user.properties' -not -path './.git/*' | head -n1)
+            if [ -n "$FOUND_PROPS" ]; then
+              USER_PROPS_ARG="-p $FOUND_PROPS"
+              echo "Using user.properties: $FOUND_PROPS"
+            else
+              echo "No user.properties found — using JMeter built-in defaults"
+            fi
+          fi
 
           $JMETER_CMD \
             -n \
-            -t "${{ env.JMX_FILE }}" \
+            -t "$JMX_FILE" \
             -l "$RESULTS_FILE" \
-            -p "jmeter/user.properties" \
+            $USER_PROPS_ARG \
             $EXTRA_ARGS
 
           echo "JMeter test completed. Results saved to: $RESULTS_FILE"
