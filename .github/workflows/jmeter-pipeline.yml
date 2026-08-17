@@ -24,9 +24,9 @@ on:
         required: false
         default: '30'
       duration:
-        description: 'Test duration in seconds (0 = use JMX default)'
+        description: 'Test duration in seconds (leave empty to use user.properties default: 30s)'
         required: false
-        default: '0'
+        default: ''
 
 # Required for GitHub Pages deployment
 permissions:
