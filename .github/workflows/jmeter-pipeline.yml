@@ -59,12 +59,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── Set up Java (JMeter requires Java 8+) ─────────────────────────────
-      - name: Set up Java 17
+      # ── Set up Java 11 (JMeter 5.6.x supports Java 8 & 11; Java 17 causes NullPointer in report generator) ──
+      - name: Set up Java 11
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '11'
 
       # ── Cache JMeter installation ──────────────────────────────────────────
       - name: Cache Apache JMeter
@@ -100,11 +100,11 @@ jobs:
           fi
           echo "JMX file found: ${{ env.JMX_FILE }}"
 
-      # ── Create output directories ──────────────────────────────────────────
-      - name: Create output directories
+      # ── Create results directory only (report dir must be created by jmeter -g, not pre-created) ──────────
+      - name: Create results directory
         run: |
           mkdir -p "${{ env.RESULTS_DIR }}"
-          mkdir -p "${{ env.REPORT_DIR }}"
+          # NOTE: Do NOT pre-create REPORT_DIR — jmeter -g will fail if the output dir already exists
 
       # ── Run JMeter test (non-GUI mode) ─────────────────────────────────────
       - name: Run JMeter Test Plan
@@ -138,12 +138,27 @@ jobs:
       - name: Validate results file
         run: |
           RESULTS_FILE="${{ env.RESULTS_DIR }}/results.jtl"
+
           if [ ! -f "$RESULTS_FILE" ]; then
             echo "ERROR: Results file not found at $RESULTS_FILE"
             exit 1
           fi
+
           LINE_COUNT=$(wc -l < "$RESULTS_FILE")
-          echo "Results file found with $LINE_COUNT lines"
+          echo "Results file has $LINE_COUNT lines"
+
+          # Show first 5 lines so we can see the CSV header & sample rows in logs
+          echo "--- First 5 lines of results.jtl ---"
+          head -n 5 "$RESULTS_FILE"
+          echo "-------------------------------------"
+
+          # Must have at least 2 lines: 1 header + 1 sample
+          if [ "$LINE_COUNT" -lt 2 ]; then
+            echo "ERROR: Results file contains no samples (only $LINE_COUNT line(s)). Cannot generate report."
+            exit 1
+          fi
+
+          echo "Validation passed: $LINE_COUNT lines found."
 
       # ── Generate HTML Report ───────────────────────────────────────────────
       - name: Generate HTML Report
@@ -151,11 +166,16 @@ jobs:
           RESULTS_FILE="${{ env.RESULTS_DIR }}/results.jtl"
           REPORT_DIR="${{ env.REPORT_DIR }}"
 
+          # Ensure report dir does NOT exist before calling jmeter -g
+          rm -rf "$REPORT_DIR"
+
           echo "Generating HTML report from: $RESULTS_FILE"
 
           ${{ env.JMETER_HOME }}/bin/jmeter \
             -g "$RESULTS_FILE" \
-            -o "$REPORT_DIR"
+            -o "$REPORT_DIR" \
+            -p "jmeter/user.properties" \
+            -Jjmeter.reportgenerator.overall_granularity=60000
 
           echo "HTML report generated at: $REPORT_DIR"
           ls -la "$REPORT_DIR"
